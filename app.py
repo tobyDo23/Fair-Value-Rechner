@@ -1,16 +1,26 @@
 import streamlit as st
 
-# Design & Header
+# Seiteneinstellungen
 st.set_page_config(page_title="Aktien-Check Pro", layout="centered")
 
-st.markdown("""
-   <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    </style>
-    """, unsafe_allow_html=True)
-
 st.title("🚀 Aktien Fair Value Rechner")
+st.info("Kombinierte Analyse: DCF (Zukunft) + KGV (Marktvergleich)")
+
+# --- Eingabe-Sektion ---
+with st.sidebar:
+    st.header("📊 Stammdaten")
+    name = st.text_input("Name der Aktie", "Meine Aktie")
+    price = st.number_input("Aktueller Kurs (€)", value=100.0)
+    shares = st.number_input("Aktien im Umlauf (Mio.)", value=10.0)
+    
+    st.divider()
+    st.header("🛡️ Risiko-Puffer")
+    mos = st.slider("Sicherheitsmarge (%)", 0, 50, 20) / 100
+
+st.subheader("Analyse-Parameter")
+# ... hier geht es normal weiter mit col1, col2 = st.columns(2)
+
+
 st.info("Kombinierte Analyse: DCF (Zukunft) + KGV (Marktvergleich)")
 
 # --- Eingabe-Sektion ---
@@ -75,3 +85,4 @@ else:
 potential = ((fair_value / price) - 1) * 100
 
 st.write(f"Das theoretische Potenzial zum fairen Wert beträgt **{potential:.1f}%**.")
+
