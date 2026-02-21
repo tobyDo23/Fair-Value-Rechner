@@ -4,11 +4,11 @@ import streamlit as st
 st.set_page_config(page_title="Aktien-Check Pro", layout="centered")
 
 st.markdown("""
-    <style>
+   <style>
     .main { background-color: #f5f7f9; }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     </style>
-    """, unsafe_allow_status_code=True)
+    """, unsafe_allow_html=True)
 
 st.title("🚀 Aktien Fair Value Rechner")
 st.info("Kombinierte Analyse: DCF (Zukunft) + KGV (Marktvergleich)")
@@ -73,4 +73,5 @@ else:
 
 # Visualisierung
 potential = ((fair_value / price) - 1) * 100
+
 st.write(f"Das theoretische Potenzial zum fairen Wert beträgt **{potential:.1f}%**.")
