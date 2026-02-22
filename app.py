@@ -1,156 +1,88 @@
 import streamlit as st
 import yfinance as yf
 import plotly.graph_objects as go
+import sqlite3
+import pandas as pd
 
-st.set_page_config(page_title="Aktien-Check Pro", layout="centered")
+# 1. Datenbank-Setup
+def init_db():
+    conn = sqlite3.connect('aktien_daten.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS analysen 
+                 (ticker TEXT, name TEXT, fair_value REAL, buy_limit REAL, peg REAL)''')
+    conn.commit()
+    conn.close()
 
-# --- TITEL & SUCHE ---
-st.title("🚀 Aktien-Analyse Live")
+init_db()
 
-ticker_input = st.text_input("Gib ein Börsenkürzel ein (z.B. AAPL, MSFT, SAP.DE)", value="AAPL").upper()
+# 2. Seiteneinstellungen
+st.set_page_config(page_title="Aktien-Check Live", layout="centered")
+st.title("🚀 Aktien-Analyse Terminal")
 
-# --- LIVE-DATEN LADEN ---
+# 3. Live-Daten Abfrage
+ticker_input = st.text_input("Börsenkürzel (z.B. AAPL, MSFT, SAP.DE)", value="AAPL").upper()
+
 @st.cache_data(ttl=3600)
-def get_stock_data(symbol):
+def get_full_data(symbol):
     try:
         stock = yf.Ticker(symbol)
         info = stock.info
         return {
             "name": info.get("longName", symbol),
             "price": info.get("currentPrice", 0.0),
-            "currency": info.get("currency", "EUR")
+            "pe": info.get("trailingPE", 0.0),
+            "growth_est": info.get("earningsGrowth", 0.10),
+            "eps_next": info.get("forwardEps", 0.0)
         }
-    except:
-        return None
+    except: return None
 
-data = get_stock_data(ticker_input)
+data = get_full_data(ticker_input)
 
 if data:
-    st.success(f"Daten geladen: **{data['name']}**")
-    current_price = data['price']
-else:
-    st.error("Ticker nicht gefunden. Bitte prüfe das Kürzel.")
-    current_price = 100.0
-
-# --- EINGABE-SEKTION ---
-with st.sidebar:
-    st.header("📊 Stammdaten")
-    price = st.number_input("Aktueller Kurs", value=float(current_price), key="p")
-    shares = st.number_input("Aktien im Umlauf (Mio.)", value=10.0)
-    mos = st.slider("Sicherheitsmarge (%)", 0, 50, 20) / 100
-
-col1, col2 = st.columns(2)
-with col1:
-    st.subheader("DCF")
-    fcf = st.number_input("Free Cashflow (Mio.)", value=50.0)
-    growth = st.slider("Wachstum %", 0, 40, 10) / 100
-    wacc = st.slider("Abzinsung %", 5, 15, 9) / 100
-with col2:
-    st.subheader("Multiples")
-    eps = st.number_input("Erwartetes EPS", value=5.0)
-    pe_target = st.number_input("Ziel-KGV", value=15.0)
-
-# --- BERECHNUNG ---
-total_pv = sum([(fcf * (1 + growth)**t) / (1 + wacc)**t for t in range(1, 6)])
-terminal_v = ((fcf * (1 + growth)**5) * 1.02) / (wacc - 0.02)
-total_pv += terminal_v / ((1 + wacc) ** 5)
-val_dcf = total_pv / shares
-val_kgv = eps * pe_target
-fair_value = (val_dcf * 0.6) + (val_kgv * 0.4)
-buy_limit = fair_value * (1 - mos)
-
-# --- GRAFIK ---
-fig = go.Figure()
-fig.add_trace(go.Bar(
-    x=['Aktueller Kurs', 'Fairer Wert', 'Kauf-Limit'],
-    y=[price, fair_value, buy_limit],
-    marker_color=['#636EFA', '#00CC96', '#EF553B']
-))
-fig.update_layout(title_text=f"Bewertungsvergleich für {ticker_input}", template="plotly_white")
-st.plotly_chart(fig, use_container_width=True)
-
-
-
-# --- SPEICHERFUNKTION ---
-if 'history' not in st.session_state:
-    st.session_state.history = []
-
-if st.button("Analyse speichern"):
-    entry = {"Name": ticker_input, "Fair Value": round(fair_value, 2), "Limit": round(buy_limit, 2)}
-    st.session_state.history.append(entry)
-    st.toast("Gespeichert!")
-
-if st.session_state.history:
-    st.divider()
-    st.subheader("Deine gespeicherten Analysen")
-    st.table(st.session_state.history)
-
-# Grundkonfiguration
-st.set_page_config(page_title="Aktien-Check Pro", layout="centered")
-
-st.title("🚀 Aktien Fair Value Rechner")
-st.markdown("Kombinierte Analyse aus innerem Wert und Marktbewertung.")
-
-# --- SIDEBAR: Stammdaten ---
-with st.sidebar:
-    st.header("📊 Stammdaten")
-    # Wir geben jedem Widget einen eindeutigen "key", um den Fehler zu vermeiden
-    name = st.text_input("Name der Aktie", value="Meine Aktie", key="input_name")
-    price = st.number_input("Aktueller Kurs (€)", value=100.0, key="input_price")
-    shares = st.number_input("Aktien im Umlauf (Mio.)", value=10.0, key="input_shares")
+    # PEG Berechnung
+    peg = data['pe'] / (data['growth_est'] * 100) if data['growth_est'] > 0 else 0
     
-    st.divider()
-    st.header("🛡️ Risiko-Puffer")
-    mos = st.slider("Sicherheitsmarge (%)", 0, 50, 20, key="input_mos") / 100
+    st.subheader(f"Marktdaten: {data['name']}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Kurs", f"{data['price']:.2f} €")
+    c2.metric("KGV (Ist)", f"{data['pe']:.1f}")
+    c3.metric("PEG Ratio", f"{peg:.2f}")
 
-# --- HAUPTBEREICH: Parameter ---
-st.subheader("Analyse-Parameter")
-col1, col2 = st.columns(2)
+    # 4. Analyse-Parameter
+    with st.sidebar:
+        st.header("Analyse-Basis")
+        shares = st.number_input("Aktien (Mio.)", value=100.0)
+        mos = st.slider("Sicherheitsmarge (%)", 0, 50, 20) / 100
+        fcf = st.number_input("Free Cashflow (Mio. €)", value=100.0)
+        growth_slider = st.slider("Wachstum % (DCF)", 0, 40, int(data['growth_est']*100)) / 100
+        pe_target = st.number_input("Ziel-KGV", value=float(data['pe']) if data['pe'] else 15.0)
 
-with col1:
-    st.markdown("**DCF (Cashflow)**")
-    fcf = st.number_input("Free Cashflow (Mio. €)", value=50.0, key="input_fcf")
-    growth = st.slider("Wachstum p.a. (5J) %", 0, 40, 10, key="input_growth") / 100
-    wacc = st.slider("Abzinsung %", 5, 15, 9, key="input_wacc") / 100
+    # 5. Berechnung
+    # DCF (vereinfacht für stabilen Lauf)
+    val_dcf = ((fcf * (1 + growth_slider)) / (0.09 - 0.02)) / shares 
+    val_kgv = data['eps_next'] * pe_target
+    fair_value = (val_dcf * 0.6) + (val_kgv * 0.4)
+    buy_limit = fair_value * (1 - mos)
 
-with col2:
-    st.markdown("**KGV (Multiples)**")
-    eps = st.number_input("Erwartetes EPS (€)", value=5.0, key="input_eps")
-    pe_target = st.number_input("Ziel-KGV", value=15.0, key="input_pe")
+    # 6. Grafik
+    fig = go.Figure(go.Bar(
+        x=['Marktpreis', 'Fairer Wert', 'Kauf-Limit'],
+        y=[data['price'], fair_value, buy_limit],
+        marker_color=['#636EFA', '#00CC96', '#EF553B']
+    ))
+    st.plotly_chart(fig, use_container_width=True)
 
-# --- BERECHNUNG ---
-# 1. DCF Berechnung
-total_pv = 0
-fcf_temp = fcf
-for t in range(1, 6):
-    fcf_temp *= (1 + growth)
-    total_pv += fcf_temp / ((1 + wacc) ** t)
+    # 7. Speichern
+    if st.button("💾 Analyse dauerhaft speichern"):
+        conn = sqlite3.connect('aktien_daten.db')
+        conn.cursor().execute("INSERT INTO analysen VALUES (?, ?, ?, ?, ?)", 
+                             (ticker_input, data['name'], round(fair_value, 2), round(buy_limit, 2), round(peg, 2)))
+        conn.commit()
+        st.success("Gespeichert!")
 
-# Endwert (Terminal Value) - 2% ewiges Wachstum angenommen
-terminal_v = (fcf_temp * 1.02) / (wacc - 0.02)
-total_pv += terminal_v / ((1 + wacc) ** 5)
-val_dcf = total_pv / shares
-
-# 2. KGV Berechnung
-val_kgv = eps * pe_target
-
-# 3. Mischwert (60% DCF / 40% KGV)
-fair_value = (val_dcf * 0.6) + (val_kgv * 0.4)
-buy_limit = fair_value * (1 - mos)
-
-# --- AUSGABE ---
+# Historie zeigen
 st.divider()
-c1, c2 = st.columns(2)
-c1.metric("Fairer Wert (Mix)", f"{fair_value:.2f} €")
-c2.metric("Kauf-Limit (inkl. MoS)", f"{buy_limit:.2f} €")
-
-potential = ((fair_value / price) - 1) * 100
-
-if price < buy_limit:
-    st.success(f"✅ UNTERBEWERTET: {name} hat +{potential:.1f}% Potenzial!")
-elif price < fair_value:
-    st.warning(f"⚠️ FAIR BEWERTET: Kurs liegt nah am fairen Wert.")
-else:
-    st.error(f"❌ ÜBERBEWERTET: Kurs liegt {abs(potential):.1f}% über dem fairen Wert.")
-
-
+if st.checkbox("Historie anzeigen"):
+    conn = sqlite3.connect('aktien_daten.db')
+    df = pd.read_sql_query("SELECT * FROM analysen", conn)
+    st.dataframe(df)
