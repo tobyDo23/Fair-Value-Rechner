@@ -18,8 +18,8 @@ init_db()
 st.set_page_config(page_title="Aktien-Check Smart", layout="centered")
 st.title("🚀 Smart Stock Terminal")
 
-# Suche
-ticker_input = st.text_input("Börsenkürzel eingeben", value="AAPL").upper()
+# 2. Suche und Datenabfrage
+ticker_input = st.text_input("Börsenkürzel (z.B. AAPL, MSFT, SAP.DE)", value="AAPL").upper()
 
 @st.cache_data(ttl=3600)
 def get_smart_data(symbol):
@@ -109,4 +109,5 @@ if st.checkbox("Gespeicherte Analysen zeigen"):
     conn = sqlite3.connect('aktien_daten.db')
     df = pd.read_sql_query("SELECT * FROM analysen", conn)
     st.dataframe(df)
+
 
