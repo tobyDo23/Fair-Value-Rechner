@@ -1,4 +1,89 @@
 import streamlit as st
+import yfinance as yf
+import plotly.graph_objects as go
+
+st.set_page_config(page_title="Aktien-Check Pro", layout="centered")
+
+# --- TITEL & SUCHE ---
+st.title("🚀 Aktien-Analyse Live")
+
+ticker_input = st.text_input("Gib ein Börsenkürzel ein (z.B. AAPL, MSFT, SAP.DE)", value="AAPL").upper()
+
+# --- LIVE-DATEN LADEN ---
+@st.cache_data(ttl=3600)
+def get_stock_data(symbol):
+    try:
+        stock = yf.Ticker(symbol)
+        info = stock.info
+        return {
+            "name": info.get("longName", symbol),
+            "price": info.get("currentPrice", 0.0),
+            "currency": info.get("currency", "EUR")
+        }
+    except:
+        return None
+
+data = get_stock_data(ticker_input)
+
+if data:
+    st.success(f"Daten geladen: **{data['name']}**")
+    current_price = data['price']
+else:
+    st.error("Ticker nicht gefunden. Bitte prüfe das Kürzel.")
+    current_price = 100.0
+
+# --- EINGABE-SEKTION ---
+with st.sidebar:
+    st.header("📊 Stammdaten")
+    price = st.number_input("Aktueller Kurs", value=float(current_price), key="p")
+    shares = st.number_input("Aktien im Umlauf (Mio.)", value=10.0)
+    mos = st.slider("Sicherheitsmarge (%)", 0, 50, 20) / 100
+
+col1, col2 = st.columns(2)
+with col1:
+    st.subheader("DCF")
+    fcf = st.number_input("Free Cashflow (Mio.)", value=50.0)
+    growth = st.slider("Wachstum %", 0, 40, 10) / 100
+    wacc = st.slider("Abzinsung %", 5, 15, 9) / 100
+with col2:
+    st.subheader("Multiples")
+    eps = st.number_input("Erwartetes EPS", value=5.0)
+    pe_target = st.number_input("Ziel-KGV", value=15.0)
+
+# --- BERECHNUNG ---
+total_pv = sum([(fcf * (1 + growth)**t) / (1 + wacc)**t for t in range(1, 6)])
+terminal_v = ((fcf * (1 + growth)**5) * 1.02) / (wacc - 0.02)
+total_pv += terminal_v / ((1 + wacc) ** 5)
+val_dcf = total_pv / shares
+val_kgv = eps * pe_target
+fair_value = (val_dcf * 0.6) + (val_kgv * 0.4)
+buy_limit = fair_value * (1 - mos)
+
+# --- GRAFIK ---
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=['Aktueller Kurs', 'Fairer Wert', 'Kauf-Limit'],
+    y=[price, fair_value, buy_limit],
+    marker_color=['#636EFA', '#00CC96', '#EF553B']
+))
+fig.update_layout(title_text=f"Bewertungsvergleich für {ticker_input}", template="plotly_white")
+st.plotly_chart(fig, use_container_width=True)
+
+
+
+# --- SPEICHERFUNKTION ---
+if 'history' not in st.session_state:
+    st.session_state.history = []
+
+if st.button("Analyse speichern"):
+    entry = {"Name": ticker_input, "Fair Value": round(fair_value, 2), "Limit": round(buy_limit, 2)}
+    st.session_state.history.append(entry)
+    st.toast("Gespeichert!")
+
+if st.session_state.history:
+    st.divider()
+    st.subheader("Deine gespeicherten Analysen")
+    st.table(st.session_state.history)
 
 # Grundkonfiguration
 st.set_page_config(page_title="Aktien-Check Pro", layout="centered")
@@ -67,4 +152,5 @@ elif price < fair_value:
     st.warning(f"⚠️ FAIR BEWERTET: Kurs liegt nah am fairen Wert.")
 else:
     st.error(f"❌ ÜBERBEWERTET: Kurs liegt {abs(potential):.1f}% über dem fairen Wert.")
+
 
