@@ -4,119 +4,104 @@ import plotly.graph_objects as go
 import sqlite3
 import pandas as pd
 
-# 1. Stabile Datenbank-Initialisierung
+# Datenbank Initialisierung
 def init_db():
-    conn = sqlite3.connect('aktien_daten.db', check_same_thread=False)
+    conn = sqlite3.connect('safe_stocks.db')
     c = conn.cursor()
-    # Wir erstellen die Tabelle mit allen benötigten Spalten von Anfang an
-    c.execute('''CREATE TABLE IF NOT EXISTS analysen 
-                 (ticker TEXT, name TEXT, fair_value REAL, buy_limit REAL, peg REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS history 
+                 (ticker TEXT, name TEXT, fair_value REAL, buy_limit REAL)''')
     conn.commit()
     conn.close()
 
 init_db()
 
-st.set_page_config(page_title="Aktien-Check Ultimate", layout="wide")
+st.set_page_config(page_title="Aktien-Check Safe", layout="wide")
+st.title("🛡️ Aktien-Analyse (Robust)")
 
-# Titel und Eingabe
-st.title("🚀 Aktien-Analyse Terminal")
-ticker_input = st.text_input("Börsenkürzel eingeben (z.B. AAPL, MSFT, SAP.DE)", value="AAPL").upper()
+# Eingabe
+ticker_symbol = st.text_input("Aktien-Kürzel eingeben (z.B. AAPL)", "AAPL").upper()
 
-@st.cache_data(ttl=3600)
-def get_full_analysis_data(symbol):
+@st.cache_data(ttl=600)
+def load_data(ticker):
     try:
-        stock = yf.Ticker(symbol)
+        stock = yf.Ticker(ticker)
+        # Wir versuchen nur die nötigsten Daten zu holen
         info = stock.info
+        if not info or 'currentPrice' not in info:
+            return None
         
-        # Historie & Cashflow
+        # Finanzdaten
         income = stock.financials
-        cashflow = stock.cashflow
-        hist_df = pd.DataFrame()
+        cf = stock.cashflow
         
-        if not income.empty and not cashflow.empty:
-            try:
-                hist_df['Umsatz'] = income.loc['Total Revenue'] / 1_000_000
-                hist_df['Gewinn'] = income.loc['Net Income'] / 1_000_000
-                if 'Operating Cash Flow' in cashflow.index and 'Capital Expenditure' in cashflow.index:
-                    hist_df['FCF'] = (cashflow.loc['Operating Cash Flow'] + cashflow.loc['Capital Expenditure']) / 1_000_000
-                hist_df = hist_df.head(3).T
-            except: pass
-
         return {
-            "name": info.get("longName", symbol),
+            "name": info.get("longName", ticker),
             "price": info.get("currentPrice", 0.0),
-            "shares": info.get("sharesOutstanding", 1.0) / 1_000_000,
             "pe": info.get("trailingPE", 15.0),
-            "eps_next": info.get("forwardEps", 0.0),
-            "growth_est": info.get("earningsGrowth", 0.10),
-            "hist_table": hist_df,
-            "rev_est": stock.revenue_estimate if hasattr(stock, 'revenue_estimate') else None,
-            "eps_est": stock.earnings_estimate if hasattr(stock, 'earnings_estimate') else None,
-            "margin": info.get("ebitdaMargins", 0) * 100
+            "eps_growth": info.get("earningsGrowth", 0.1),
+            "eps_next": info.get("forwardEps", 5.0),
+            "shares": info.get("sharesOutstanding", 1000000) / 1_000_000,
+            "income_data": income,
+            "cf_data": cf
         }
     except Exception as e:
-        st.error(f"Daten für {symbol} konnten nicht geladen werden.")
+        st.error(f"Fehler beim Laden von {ticker}: {e}")
         return None
 
-data = get_full_analysis_data(ticker_input)
+data = load_data(ticker_symbol)
 
 if data:
-    # Berechnungen
-    growth_val = data['growth_est'] * 100
-    peg_ratio = data['pe'] / growth_val if growth_val > 0 else 0
+    st.success(f"Daten für {data['name']} erfolgreich geladen!")
+    
+    # Anzeige oben
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Preis", f"{data['price']:.2f} €")
+    c2.metric("KGV", f"{data['pe']:.1f}")
+    c3.metric("Aktien (Mio.)", f"{data['shares']:.1f}")
 
-    # Anzeige Metriken
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Kurs", f"{data['price']:.2f} €")
-    m2.metric("KGV", f"{data['pe']:.1f}")
-    m3.metric("PEG Ratio", f"{peg_ratio:.2f}")
-    m4.metric("EBITDA Marge", f"{data['margin']:.1f}%")
+    # --- HISTORIE ---
+    st.subheader("Finanz-Historie (Mio.)")
+    try:
+        if not data['income_data'].empty:
+            df_hist = data['income_data'].loc[['Total Revenue', 'Net Income']].head(3).T
+            st.table(df_hist.style.format("{:.2f}"))
+    except:
+        st.info("Keine Detail-Historie verfügbar.")
 
-    # Tabellen Bereich
-    st.divider()
-    col_left, col_right = st.columns(2)
-    with col_left:
-        st.subheader("📜 Historie (Mio.)")
-        if not data['hist_table'].empty:
-            st.dataframe(data['hist_table'], use_container_width=True)
-    with col_right:
-        st.subheader("🔮 Prognosen")
-        if data['rev_est'] is not None:
-            st.write("Umsatz Schätzungen")
-            st.dataframe(data['rev_est'][['avg', 'low', 'high']].head(2), use_container_width=True)
-
-    # Sidebar & Kalkulation
+    # --- RECHNER ---
     with st.sidebar:
-        st.header("⚙️ Rechner")
-        fcf_in = st.number_input("Free Cashflow (Mio.)", value=float(data['hist_table'].loc['FCF'].iloc[0]) if 'FCF' in data['hist_table'].index else 100.0)
-        shares_in = st.number_input("Aktien (Mio.)", value=float(data['shares']))
-        growth_in = st.slider("Wachstum %", 0, 40, int(data['growth_est']*100)) / 100
+        st.header("Analyse-Werte")
+        fcf_manual = st.number_input("Free Cashflow (Mio.)", value=100.0)
+        growth = st.slider("Wachstum %", 0, 40, 10) / 100
         pe_target = st.number_input("Ziel-KGV", value=float(data['pe']))
         mos = st.slider("Sicherheitsmarge %", 0, 50, 20) / 100
 
-    # Fair Value
-    val_dcf = ((fcf_in * (1 + growth_in)) / (0.09 - 0.02)) / shares_in 
+    # Berechnung (DCF vereinfacht für Stabilität)
+    val_dcf = ((fcf_manual * (1 + growth)) / (0.09 - 0.02)) / data['shares']
     val_kgv = data['eps_next'] * pe_target
-    fair_value = (val_dcf * 0.6) + (val_kgv * 0.4)
+    fair_value = (val_dcf * 0.5) + (val_kgv * 0.5)
     buy_limit = fair_value * (1 - mos)
 
     # Grafik
-    fig = go.Figure(go.Bar(x=['Markt', 'Fair', 'Limit'], y=[data['price'], fair_value, buy_limit], marker_color=['blue', 'green', 'red']))
+    fig = go.Figure(go.Bar(
+        x=['Markt', 'Fairer Wert', 'Kauf-Limit'],
+        y=[data['price'], fair_value, buy_limit],
+        marker_color=['blue', 'green', 'red']
+    ))
     st.plotly_chart(fig, use_container_width=True)
 
-    if st.button("💾 Speichern"):
-        conn = sqlite3.connect('aktien_daten.db')
-        conn.cursor().execute("INSERT INTO analysen (ticker, name, fair_value, buy_limit, peg) VALUES (?, ?, ?, ?, ?)", 
-                             (ticker_input, data['name'], round(fair_value, 2), round(buy_limit, 2), round(peg_ratio, 2)))
+    if st.button("Speichern"):
+        conn = sqlite3.connect('safe_stocks.db')
+        conn.cursor().execute("INSERT INTO history (ticker, name, fair_value, buy_limit) VALUES (?,?,?,?)",
+                             (ticker_symbol, data['name'], fair_value, buy_limit))
         conn.commit()
-        st.success("Gespeichert!")
+        st.toast("Gespeichert!")
 
-# Historie zeigen
-st.divider()
-if st.checkbox("Analysen-Historie"):
-    try:
-        conn = sqlite3.connect('aktien_daten.db')
-        df_h = pd.read_sql_query("SELECT * FROM analysen ORDER BY timestamp DESC", conn)
-        st.dataframe(df_h, use_container_width=True)
-    except:
-        st.warning("Historie wird nach dem ersten Speichern erstellt.")
+else:
+    st.warning("⚠️ Keine Daten gefunden. Versuche es mit einem anderen Kürzel (z.B. MSFT oder TSLA).")
+
+# Historie
+if st.checkbox("Analysen zeigen"):
+    conn = sqlite3.connect('safe_stocks.db')
+    df_h = pd.read_sql_query("SELECT * FROM history", conn)
+    st.dataframe(df_h, use_container_width=True)
